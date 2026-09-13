@@ -19,6 +19,10 @@ Notes and study material for the Certified Cloud Native Platform Engineer (CNPE)
 11. [Cost for Platforms: What Drives Spend and How to Reduce It](./platform-architecture-and-infrastructure/11-cost-for-platforms-what-drives-spend-and-how-to-reduce-it.md)
 12. [Demo: Cost Visibility with OpenCost](./platform-architecture-and-infrastructure/12-demo-cost-visibility-with-opencost.md)
 
-**Appendix**
+### GitOps and Continuous Delivery
 
-- [Study Notes: ResourceQuota & LimitRange](./platform-architecture-and-infrastructure/99-study-notes-resourcequota-and-limitrange.md)
+### Platform APIs and Self-Service Capabilities
+
+### Observability and Operations
+
+### Security and Policy Enforcement
