@@ -2,203 +2,164 @@
 > Fetch the complete documentation index at: https://notes.kodekloud.com/llms.txt
 > Use this file to discover all available pages before exploring further.
 
-# Security in Delivery Build Pipelines That Ship Safely
+# GitOps Explained Desired State Drift and Reconciliation
 
-> Hardening CI/CD delivery pipelines by building, scanning, signing, and enforcing admission of container images to prevent supply chain attacks
+> Explains GitOps principles, the declarative desired state model, reconciliation loop, drift detection and self healing, and the four pillars enabling secure auditable continuous delivery.
 
-Earlier guidance often focused on securing what runs inside the cluster—RBAC, admission control, PSS, mTLS. This document shifts the emphasis to what gets into the cluster in the first place by hardening the delivery pipeline, container images, dependencies, and build artifacts. If attackers cannot get through your runtime protections, they will try your supply chain. This lesson covers practical controls—image scanning, signing, admission enforcement—and how SLSA and SBOMs fit into a robust pipeline.
+Welcome to the GitOps and Continuous Delivery lesson.
 
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/software-security-learning-objectives-diagram.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=00e5a4ba2cbe2f0f1d17b80c44e65fb7" alt="The image outlines four learning objectives related to software security and integrity, including image scanning, signing, enforcement policies, and SLSA/SBOM concepts." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/software-security-learning-objectives-diagram.jpg" />
-</Frame>
+Scenario: It's 2 a.m. and your pager goes off — production is down. You SSH into the cluster to investigate, but something changed and you have no record of what, when, or who. You're flying blind. This is the world before GitOps.
 
-## Why supply-chain attacks are high-impact
+In this lesson you'll learn:
 
-Supply chain attacks are particularly damaging because they break trust at the source. Common supply-chain risks include:
-
-* Vulnerable base images — pulling a public image that contains many known CVEs.
-* Compromised dependencies — malicious packages injected into npm, PyPI, or Go modules during the build.
-* Tampered artifacts — images or binaries modified between build and deploy.
-* Unscanned images — artifacts reaching production without any vulnerability checks.
-
-These threats target the build process rather than runtime components. To mitigate them, security must shift left into CI/CD and artifact management.
+* The problems GitOps solves,
+* The four pillars of GitOps,
+* How the reconciliation loop functions, and
+* How drift detection and self-healing work.
 
 <Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/supply-chain-attack-surface-vulnerabilities.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=f1f7db1d45a5ebd393dddefa0b16a737" alt="The image outlines the supply chain attack surface, highlighting vulnerabilities such as vulnerable base images, compromised dependencies, tampered artifacts, and unscanned images in production. Each point explains potential risks like CVEs, malicious packages, and unchecked vulnerabilities." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/supply-chain-attack-surface-vulnerabilities.jpg" />
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/gitops-learning-objectives-reconciliation-drifts.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=cc808a3882ab45281b50013b6517880d" alt="The image lists four learning objectives related to GitOps, including understanding its problems, defining its pillars, explaining the reconciliation loop, and understanding drift detection and self-healing strategies." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/gitops-learning-objectives-reconciliation-drifts.jpg" />
 </Frame>
 
-## Four pipeline gates to enforce
+Why incidents like this occur
 
-A practical, enforceable delivery pipeline includes four gates. Each gate addresses a different threat class and should be automated in CI:
+Many Kubernetes environments grant developers direct `kubectl` access to production. That enables ad-hoc, imperative changes from developers' laptops. Those changes are applied directly, often without a centralized audit trail or version history.
 
-| Gate  | Goal                                               | Common tools & practices                                                                                                                                                                                 |
-| ----- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Build | Produce minimal, reproducible images               | Multi-stage Dockerfiles, pinned dependencies, minimal base images (e.g., [distroless](https://github.com/GoogleContainerTools/distroless), [Alpine](https://alpinelinux.org/)), reproducible build flags |
-| Scan  | Detect known vulnerabilities and misconfigurations | `Trivy`, `Grype`, `Anchore`; fail pipelines on disallowed severities                                                                                                                                     |
-| Sign  | Prove provenance and integrity of artifacts        | `Cosign` (key-based or keyless with Sigstore Fulcio/Rekor), recorded attestations                                                                                                                        |
-| Admit | Enforce that only scanned & signed artifacts run   | Admission controllers like `Kyverno`, `OPA/Gatekeeper` validating signatures and SBOM attestation                                                                                                        |
-
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/secure-pipeline-four-gates-tools.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=a193a32249abc458575e5fcde05653c8" alt="The image outlines a secure pipeline with four gates: Build, Scan, Sign, and Admit, each accompanied by relevant tools and practices." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/secure-pipeline-four-gates-tools.jpg" />
-</Frame>
-
-Make sure code and artifacts flow through these gates before deployment. The sections below provide concrete tools, commands, and an end-to-end flow you can adopt.
-
-## Image scanning with Trivy
-
-Use image scanning as a hard gate in CI—not just informational output. Trivy is a widely used open-source scanner that finds vulnerabilities in OS packages, application dependencies, and common misconfigurations.
-
-Key CI behavior:
-
-* Fail the pipeline when unacceptable severities are found.
-* Treat scanner errors as failures (don’t allow unknown scanner state to be an implicit pass).
-
-Example usage:
+Example (imperative action):
 
 ```bash theme={null}
-# Scan an image and print detected vulnerabilities
-trivy image registry.company.com/app:v1.2
-
-# Fail the pipeline on any CRITICAL or HIGH vulnerabilities
-trivy image --exit-code 1 \
-  --severity CRITICAL,HIGH \
-  registry.company.com/app:v1.2
+# example of an imperative client action
+kubectl apply -f ./manifest.yaml
 ```
 
-Trivy exit codes:
-
-* 0: no vulnerabilities found at the specified severities (pipeline can continue)
-* 1: matching vulnerabilities found (pipeline should fail)
-* 2: scanner error or unexpected problem (treat as a failure and investigate)
-
-<Callout icon="warning" color="#FF6B6B">
-  Treat a scanner error (exit code 2) as a pipeline failure. Silent failures or degraded scanners can let vulnerable images slip through.
-</Callout>
-
-## Image signing with Cosign (Sigstore)
-
-Signing artifacts proves provenance and integrity. Sigstore's Cosign is a broadly adopted tool for signing container images and storing signatures in a registry.
-
-Why sign?
-
-* Provenance: shows the artifact originated from your pipeline.
-* Integrity: proves the artifact hasn't been altered since signing.
-* Trust: restricts which identities/keys can create valid signatures.
-
-Key-based signing example:
-
-```bash theme={null}
-# Generate a key pair (one-time)
-cosign generate-key-pair
-
-# Sign an image after it passes scanning
-cosign sign --key cosign.key registry.company.com/app:v1.2
-
-# Verify a signature using the public key
-cosign verify --key cosign.pub registry.company.com/app:v1.2
-```
-
-Keyless signing
-
-* Cosign also supports keyless signing using Sigstore Fulcio and Rekor with CI OIDC tokens, removing the need to manage long-lived private keys. Keyless is typically recommended for CI automation where secret key management is harder to secure.
-
-## Complete automated flow
-
-A typical automated flow in CI/CD:
-
-1. Build the image with minimal base layers and reproducibility in mind.
-2. Scan the image with Trivy; if disallowed severities are found, fail the pipeline.
-3. Upon a clean scan, sign the image with Cosign (keyed or keyless).
-4. Push the signed image and stored signatures/attestations to your registry.
-5. Deploy—admission controls in the cluster verify signatures/attestations before allowing workloads.
-
-Any failure at a gate prevents the artifact from reaching production.
+When multiple people make ad-hoc changes—especially during high-pressure incidents—conflicting modifications can be introduced simultaneously. With no single source of truth and no formal change history, teams cannot track who changed what, when, or why.
 
 <Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/image-signing-pipeline-cosign-trivy.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=5541906ae3caacc67cebaf16a5dbd927" alt="The image illustrates the complete pipeline for image signing with Cosign, involving stages such as coding, building, scanning with Trivy, signing with Cosign, pushing to a registry, and deploying." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/image-signing-pipeline-cosign-trivy.jpg" />
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/deployment-roulette-flowchart-teams.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=d6eae91fd96b9c8fedbdc0d5268c6b03" alt="The image illustrates a flowchart titled &#x22;Deployment Roulette,&#x22; showing three uncoordinated teams (Dev, Ops, SRE) sending conflicting changes to a production cluster." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/deployment-roulette-flowchart-teams.jpg" />
 </Frame>
 
-## Admission control: verifying signatures with Kyverno
+Consequences: configuration drift, unpredictable behavior, and prolonged outages
 
-Enforce policy at runtime by validating image signatures and attestations. The Kyverno ClusterPolicy below rejects Pod creation for images from your registry unless they verify against the embedded public key.
+Uncoordinated changes create configuration drift between environments, unpredictable production behavior, and outages caused by incompatible or unintended changes. This makes root cause analysis difficult and puts production stability in the hands of human coordination and memory rather than an auditable system.
+
+<Frame>
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/deployment-roulette-issues-outline.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=98dafe62be99c22e255c01e5a9f318c6" alt="The image outlines the concept of &#x22;Deployment Roulette,&#x22; highlighting three issues: configuration drift between environments, unpredictable production behavior, and prolonged outages from incompatible or unintended changes." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/deployment-roulette-issues-outline.jpg" />
+</Frame>
+
+Imperative vs. Declarative
+
+Root cause: the imperative model. Running imperative commands (scale, set image, etc.) immediately changes cluster state and leaves only ephemeral terminal history.
+
+Imperative examples:
+
+```bash theme={null}
+# Imperative examples (state-changing commands run ad-hoc)
+kubectl scale deployment api --replicas=5
+kubectl set image deployment/web web=nginx:1.21
+```
+
+There is no integrated version history, no central audit trail, and no automatic detection when the same resource changes later.
+
+By contrast, the declarative model records desired state in files (YAML/JSON) committed to Git. Git automatically provides a versioned history so you can see who changed what, when, and why (when commit messages are used).
+
+Example (declarative snippet):
 
 ```yaml theme={null}
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: verify-image-signatures
 spec:
-  validationFailureAction: Enforce
-  background: false
-  rules:
-    - name: check-image-signature
-      match:
-        resources:
-          kinds: ["Pod"]
-      verifyImages:
-        - imageReferences:
-            - "registry.company.com/*"
-          attestors:
-            - entries:
-                - keys:
-                    - |
-                      -----BEGIN PUBLIC KEY-----
-                      ...
-                      -----END PUBLIC KEY-----
+  replicas: 5
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.21
 ```
 
-If an image is unsigned or the signature does not verify against the provided public key(s), Pod creation is rejected—closing the loop: Trivy ensures images are clean, Cosign proves provenance, and Kyverno enforces acceptance at runtime.
-
-<Callout icon="lightbulb" color="#1CB2FE">
-  Use a secure key management strategy (or keyless signing) and automate signing only after a successful scan to prevent accidental acceptance of unverified images.
-</Callout>
-
-## SLSA and SBOM — what they are and why they matter
-
-* SLSA (Supply-chain Levels for Software Artifacts) provides a maturity model for build integrity:
-  * Level 1: documented builds and basic evidence
-  * Level 4: hermetic, reproducible builds with tamper-proof review and enforced provenance
-    SLSA helps you reason about how much assurance your pipeline provides.
-
-* SBOM (Software Bill of Materials) lists components used in your software. When a CVE is disclosed, SBOMs help you quickly identify impacted services. Common SBOM formats include `SPDX` and `CycloneDX`. Tools such as `Syft` and `Trivy` can generate SBOMs for images and artifacts.
+The key insight: GitOps replaces imperative “do this now” commands with declarative desired state and automation that converges actual cluster state to that declared state.
 
 <Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/slsa-supply-chain-levels-sbom-comparison.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=e2e6879455095580ba7715073480d559" alt="The image compares SLSA's supply-chain levels for software artifacts with SBOM's software bill of materials, highlighting key aspects and tools for each." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Security-in-Delivery-Build-Pipelines-That-Ship-Safely/slsa-supply-chain-levels-sbom-comparison.jpg" />
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/imperative-vs-declarative-commands-comparison.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=b29462c2b23f4a918339b2f84a621481" alt="The image compares imperative commands (before) with declarative commands (after), highlighting a shift from step-by-step instructions to automation and desired state declaration." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/imperative-vs-declarative-commands-comparison.jpg" />
 </Frame>
 
-## Quick reference and recommended commands
+What is GitOps?
 
-* Block images with unacceptable vulnerabilities:
+GitOps is an operational model where Git repositories store declarative descriptions of infrastructure and applications. Automated controllers running in the cluster ensure the cluster state matches those Git-declared states.
 
-```bash theme={null}
-trivy image --exit-code 1 --severity CRITICAL,HIGH registry.company.com/app:v1.2
-```
+<Frame>
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/git-source-of-truth-gitops-yaml-json.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=3da92db67c02024f597a5dd07127eb90" alt="The image illustrates Git as the single source of truth in a GitOps operational model, connecting Git repositories to declarative descriptions in YAML/JSON format." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/git-source-of-truth-gitops-yaml-json.jpg" />
+</Frame>
 
-* Sign images with Cosign (key-based example):
+The four pillars of GitOps
 
-```bash theme={null}
-cosign generate-key-pair
-cosign sign --key cosign.key registry.company.com/app:v1.2
-cosign verify --key cosign.pub registry.company.com/app:v1.2
-```
+| Pillar      | What it means                                  | Why it matters                                                                |
+| ----------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| Declarative | Desired state defined as files (`YAML`/`JSON`) | Describes the intended system rather than individual commands                 |
+| Versioned   | All manifests stored in Git                    | Complete commit history, easy rollbacks and audits                            |
+| Pull-based  | Agents inside the cluster pull from Git        | No CI with persistent cluster creds; reduces secret sprawl and attack surface |
+| Reconciled  | Controllers continuously converge state        | Detects and corrects drift; enables self-healing                              |
 
-* Enforce signed images with Kyverno by verifying signatures at admission.
+<Frame>
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/git-single-source-of-truth-features.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=aea4cca11ec30e5baa598d270bc3506e" alt="The image illustrates four features of Git as a single source of truth: Declarative, Versioned, Pulled, and Reconciled, with brief descriptions of each." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/git-single-source-of-truth-features.jpg" />
+</Frame>
 
-## Further reading and references
+If it’s not in Git, it does not exist. If it's in Git, it should be in the cluster.
 
-* Trivy: [https://github.com/aquasecurity/trivy](https://github.com/aquasecurity/trivy)
-* Cosign / Sigstore: [https://sigstore.dev/](https://sigstore.dev/)
-* Kyverno: [https://kyverno.io/](https://kyverno.io/)
-* SLSA: [https://slsa.dev/](https://slsa.dev/)
-* SBOM formats: [https://spdx.dev/](https://spdx.dev/), [https://cyclonedx.org/](https://cyclonedx.org/)
-* Syft (SBOM generation): [https://github.com/anchore/syft](https://github.com/anchore/syft)
+How the reconciliation loop works
 
-## Wrap up
+The reconciliation loop is the engine of GitOps. Controllers such as Argo CD and Flux operate continuously in three core phases:
 
-A secure delivery pipeline enforces the four gates—build, scan, sign, and admit—automatically. Implement these controls to move security left into CI/CD, reduce the risk of supply-chain compromises, and ensure only verified artifacts reach your cluster.
+* Watch: The controller detects Git changes via polling, webhooks, or provider notifications.
+* Compare: It compares the declared desired state in Git against the actual cluster state resource-by-resource.
+* Sync: When differences are found, the controller applies the necessary changes (create/update/delete) to align the cluster with Git.
+
+This loop integrates with developer workflows: Code & Push → Detect & Compare → Sync & Deploy → Continuous Watch.
+
+<Frame>
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/reconciliation-loop-cyclical-process-diagram.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=02a82f3fab012e10a2e76c55f837ec8c" alt="The image depicts &#x22;The Reconciliation Loop,&#x22; a cyclical process involving four steps: Code & Push, Detect & Compare, Sync & Deploy, and Continuous Watch, each with brief descriptions." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/reconciliation-loop-cyclical-process-diagram.jpg" />
+</Frame>
+
+Example: you change a Deployment's image from `1.0` to `2.0` and push the commit. Within the controller's detection window (seconds to minutes), it sees the Git commit, compares the cluster's running `1.0` deployment, and applies the update to `2.0`. The loop is continuous; it’s not a one-time deployment.
+
+Drift detection and self-healing
+
+Drift occurs when the cluster diverges from Git-declared desired state. Controllers handle drift in several ways depending on policy and environment sensitivity.
+
+| Response                 | Behavior                                                                             | Use case                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| Auto-sync (self-healing) | Controller automatically reverts unintended changes to match Git                     | Standard GitOps for most environments                          |
+| Alert + manual sync      | Controller alerts team and waits for approval to apply changes                       | Production systems requiring human checks                      |
+| Diff + PR workflow       | Controller generates a diff or PR to update Git when cluster changes are intentional | When cluster-initiated changes must be reflected back into Git |
+
+<Frame>
+  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/fWoje-V05mxPGY9H/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/drift-detection-self-healing-github-process.jpg?fit=max&auto=format&n=fWoje-V05mxPGY9H&q=85&s=5306693b7d38bcde849012d9a4255672" alt="The image outlines a drift detection and self-healing process using GitHub, featuring auto-sync for self-healing and alert and manual sync for human approval." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/GitOps-and-Continuous-Delivery/GitOps-Explained-Desired-State-Drift-and-Reconciliation/drift-detection-self-healing-github-process.jpg" />
+</Frame>
+
+Common sources of drift
+
+* Manual `kubectl` edits and ad-hoc changes.
+* Autoscalers (HPA/VPA) adjusting replicas or resource requests/limits.
+* Other controllers or operators adding annotations/labels or modifying resources.
+
+Principle to follow: Git is authoritative. Either the controller syncs the cluster to Git, or you update Git to reflect an intentional change in the cluster. The cluster is not the source of truth.
+
+<Callout icon="lightbulb" color="#1CB2FE">
+  Using a pull-based model (agents inside the cluster pulling from Git) reduces secret sprawl. CI/CD systems do not need persistent cluster credentials to apply changes, improving security and auditability.
+</Callout>
+
+Recap — core takeaways
+
+* Git is the single source of truth: desired state belongs in version-controlled repositories.
+* Prefer declarative manifests over imperative commands: state is described, automation handles convergence.
+* Continuous reconciliation prevents unintentional drift: controllers compare and correct constantly.
+* Pull-based deployments are more secure and auditable because the cluster pulls from Git and CI/CD systems avoid persistent credentials.
+
+Further reading and references
+
+* Argo CD: [https://argo-cd.readthedocs.io](https://argo-cd.readthedocs.io)
+* Flux: [https://fluxcd.io/](https://fluxcd.io/)
+* GitOps principles and best practices: [https://www.gitops.tech/](https://www.gitops.tech/)
+
+This concludes the lesson on GitOps, desired state, drift, and reconciliation.
 
 <CardGroup>
-  <Card title="Watch Video" icon="video" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/35a7fadb-02d8-4557-a819-2e4dcfa970cc/lesson/4fa48a7f-b1e6-4e09-bded-51f38be9355d" />
-
-  <Card title="Practice Lab" icon="flask-conical" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/35a7fadb-02d8-4557-a819-2e4dcfa970cc/lesson/b53de961-c16f-40c3-bae8-75ab707cb814" />
+  <Card title="Watch Video" icon="video" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/dff5382b-dbe7-4cac-bd2b-d5a47028945e/lesson/c28403c7-4078-4ed2-a273-ec35b204e887" />
 </CardGroup>
