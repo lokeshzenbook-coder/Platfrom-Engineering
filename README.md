@@ -67,3 +67,18 @@ Notes and study material for the Certified Cloud Native Platform Engineer (CNPE)
 12. [Incident Playbook: Triage, Fix, Validate, Repeat](./4-observability-and-operations/12-incident-playbook-triage-fix-validate-repeat.md)
 
 ### Security and Policy Enforcement
+
+1. [Platform Security Simplified: Threats, Guardrails and Trust](./5-security-and-policy-enforcement/01-platform-security-simplified-threats-guardrails-and-trust.md)
+2. [RBAC You Can Live With: Least Privilege Without Pain](./5-security-and-policy-enforcement/02-rbac-you-can-live-with-least-privilege-without-pain.md)
+3. [Demo: RBAC Roles and Bindings](./5-security-and-policy-enforcement/03-demo-rbac-roles-and-bindings.md)
+4. [Admission Control: Policies That Prevent Bad Deployments](./5-security-and-policy-enforcement/04-admission-control-policies-that-prevent-bad-deployments.md)
+5. [Demo: Admission Webhooks in Action](./5-security-and-policy-enforcement/05-demo-admission-webhooks-in-action.md)
+6. [OPA Gatekeeper: Constraint Based Policy Enforcement](./5-security-and-policy-enforcement/06-opa-gatekeeper-constraint-based-policy-enforcement.md)
+7. [Demo: Policy as Code with Gatekeeper](./5-security-and-policy-enforcement/07-demo-policy-as-code-with-gatekeeper.md)
+8. [Kyverno: Kubernetes Native Policy Management](./5-security-and-policy-enforcement/08-kyverno-kubernetes-native-policy-management.md)
+9. [Demo: Supply Chain Guardrails with Kyverno](./5-security-and-policy-enforcement/09-demo-supply-chain-guardrails-with-kyverno.md)
+10. [Pod Security Standards: Your Baseline Safety Net](./5-security-and-policy-enforcement/10-pod-security-standards-your-baseline-safety-net.md)
+11. [Demo: Applying Pod Security Standards](./5-security-and-policy-enforcement/11-demo-applying-pod-security-standards.md)
+12. [Service Mesh Security: Encryption and Identity](./5-security-and-policy-enforcement/12-service-mesh-security-encryption-and-identity.md)
+13. [Demo: mTLS with Istio](./5-security-and-policy-enforcement/13-demo-mtls-with-istio.md)
+14. [Security in Delivery: Build Pipelines That Ship Safely](./5-security-and-policy-enforcement/14-security-in-delivery-build-pipelines-that-ship-safely.md)
