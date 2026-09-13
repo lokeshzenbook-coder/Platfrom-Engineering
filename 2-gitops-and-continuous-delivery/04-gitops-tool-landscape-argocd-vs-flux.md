@@ -1,0 +1,1 @@
+# GitOps Tool Landscape: ArgoCD vs Flux

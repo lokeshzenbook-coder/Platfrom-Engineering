@@ -1,0 +1,1 @@
+# CRD Design Patterns: Versioning, Status and Printer Columns
