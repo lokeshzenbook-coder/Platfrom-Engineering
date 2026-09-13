@@ -2,186 +2,282 @@
 > Fetch the complete documentation index at: https://notes.kodekloud.com/llms.txt
 > Use this file to discover all available pages before exploring further.
 
-# Service Mesh Security Encryption and Identity
+# Demo mTLS with Istio
 
-> Explains Istio mTLS, SPIFFE identities, PeerAuthentication and AuthorizationPolicy to secure and control encrypted pod-to-pod traffic in Kubernetes service meshes
+> Guide demonstrating Istio mTLS setup in Kubernetes, enabling sidecar injection, enforcing strict mutual TLS, applying AuthorizationPolicy to restrict service access, and validating with istioctl and in-cluster tests
 
-We have already secured who can access the cluster (RBAC), what configurations are allowed (Admission Control), and what pods can do at runtime (Pod Security Standards). The next layer is securing network traffic between workloads inside the cluster.
+RBAC controls who can interact with the Kubernetes API. But intra-cluster service-to-service traffic is unauthenticated and unencrypted by default: a compromised pod can communicate freely with other services. Mutual TLS (mTLS) provides both encryption in transit and identity verification between workloads. Istio implements mTLS transparently via sidecar proxies so your application code does not need to change.
 
-Mutual TLS (mTLS) encrypts all pod-to-pod communication and gives each workload a cryptographic identity. Without mTLS, traffic inside the cluster is plaintext and a compromised pod could sniff sensitive data or impersonate other services.
+In this guide you'll:
 
-In this article we use Istio Service Mesh as an example to demonstrate:
+* Verify cluster and namespace state,
+* Enable Istio automatic sidecar injection for the demo namespace,
+* Observe default mTLS behavior (PERMISSIVE),
+* Enforce STRICT mTLS with a PeerAuthentication resource,
+* Apply an AuthorizationPolicy to restrict which services may call the payment API,
+* Validate the policy via in-cluster curl requests,
+* Run `istioctl analyze` for a final diagnostic check.
 
-* How mTLS works with sidecar proxies and SPIFFE identities.
-* How to configure mTLS modes with `PeerAuthentication`.
-* How to apply service-level access control using `AuthorizationPolicy` and SPIFFE identities.
+***
 
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/mtls-istio-learning-objectives-diagram.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=a12b2e1255b0f24580346ccdf4d70707" alt="The image lists learning objectives related to mTLS and Istio, including its importance, implementation with sidecar proxies and SPIFFE identities, PeerAuthentication for configuring modes, and AuthorizationPolicy for access control." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/mtls-istio-learning-objectives-diagram.jpg" />
-</Frame>
+## 1) Check current state
 
-## Why mTLS matters
+Confirm Istio control plane pods and application pods in the `mesh-demo` namespace. Before enabling injection, application pods run without the sidecar (single container).
 
-Kubernetes networking is plaintext by default. That creates three main risks:
+Check Istio control plane pods:
 
-* A compromised pod can sniff node-local traffic — exposing API keys, credentials, and user data.
-* There is no built-in service identity, so pods can impersonate one another.
-* There is no native, easy way to enforce which services are allowed to call which.
+```bash theme={null}
+kubectl get pods -n istio-system
+```
 
-mTLS addresses these problems by providing:
+Example output:
 
-* Encryption: traffic is encrypted in transit.
-* Identity: each workload receives a SPIFFE certificate that encodes its trust domain, namespace, and service account.
-* Authentication: callers are verified before connections are established.
+```text theme={null}
+NAME                                   READY   STATUS    RESTARTS   AGE
+istio-egressgateway-8455f4dc86-9xm62   1/1     Running   0          10m
+istio-ingressgateway-767bc4085b-t6x9k  1/1     Running   0          10m
+istiod-659d96fcd-xrr5n                 1/1     Running   0          12m
+```
 
-Learn more about SPIFFE: [https://spiffe.io/](https://spiffe.io/)
+Check application pods in the demo namespace (no sidecars yet):
 
-## How Istio implements mTLS
+```bash theme={null}
+kubectl get pods -n mesh-demo
+```
 
-Istio’s control plane (Istiod) acts as a certificate authority. It issues short-lived X.509 certificates to each pod’s Envoy sidecar. Each certificate contains a SPIFFE URI identity such as:
+Example output:
 
-spiffe://cluster.local/ns/frontend/sa/web-app
+```text theme={null}
+NAME                           READY   STATUS    RESTARTS   AGE
+order-api-764fd948dc-7xztj     1/1     Running   0          5m
+payment-api-756c646c67-dxmx2   1/1     Running   0          5m
+web-frontend-8586897ccf-xvbfm  1/1     Running   0          5m
+```
 
-When pod A talks to pod B, the Envoy sidecars perform mutual TLS and validate each other’s certificates. Application code doesn’t need changes — apps continue to send plain HTTP. Encryption and identity verification happen at the sidecar layer.
+Run an initial analysis (recommended):
 
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/istio-mtls-flow-diagram-envoy.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=a244940b8d0ca6a196e38d12b973c123" alt="The image illustrates how Istio mTLS works, showing the flow from Istiod issuing certificates, to the Envoy Sidecar (Source) encrypting and sending traffic, and the Envoy Sidecar (Destination) receiving, verifying, and forwarding the traffic." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/istio-mtls-flow-diagram-envoy.jpg" />
-</Frame>
+```bash theme={null}
+istioctl analyze -n mesh-demo
+```
 
-## Controlling mTLS with PeerAuthentication
+Example informational output:
 
-Istio’s `PeerAuthentication` resource determines the mTLS mode for inbound traffic. The key field is `spec.mtls.mode`.
+```text theme={null}
+Info [IST0102] (Namespace mesh-demo) The namespace is not enabled for Istio injection. Run 'kubectl label namespace mesh-demo istio-injection=enabled' to enable it.
+Info [IST0118] (Service mesh-demo/order-api) Port name (port: 80, targetPort: 80) doesn't follow Istio's port naming convention.
+...
+```
 
-Common modes and recommended usage:
+***
 
-| Mode         | Description                                                                  | When to use                                                      |
-| ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `STRICT`     | Require mTLS for all inbound traffic. Connections failing mTLS are rejected. | Production (recommended once all services are meshed)            |
-| `PERMISSIVE` | Accept both mTLS and plaintext.                                              | Safe migration stage — allows mixed workloads                    |
-| `DISABLE`    | Turn off mTLS entirely for the scoped workloads.                             | Rarely recommended; use only for troubleshooting or legacy cases |
+## 2) Enable automatic sidecar injection and restart workloads
 
-Example `PeerAuthentication` to enforce strict mTLS for the `payments` namespace:
+Label the namespace to enable automatic Istio sidecar injection. Then restart the deployments so new pods are created with the sidecar proxy.
+
+```bash theme={null}
+kubectl label namespace mesh-demo istio-injection=enabled
+kubectl rollout restart deployment/web-frontend deployment/payment-api deployment/order-api -n mesh-demo
+```
+
+After pods restart, each workload should have two containers (application + `istio-proxy`). Verify:
+
+```bash theme={null}
+kubectl get pods -n mesh-demo
+```
+
+Example output after restart:
+
+```text theme={null}
+NAME                                READY   STATUS    RESTARTS   AGE
+order-api-764fd948dc-7xztj          2/2     Running   0          1m
+payment-api-756c646c67-dxmx2        2/2     Running   0          1m
+web-frontend-8586897ccf-xvbfm       2/2     Running   0          1m
+```
+
+Inspect a pod to see the effective mTLS mode:
+
+```bash theme={null}
+istioctl describe pod -n mesh-demo web-frontend-8586897ccf-xvbfm
+```
+
+Look for:
+
+```bash theme={null}
+Effective PeerAuthentication:
+  Workload mTLS mode: PERMISSIVE
+```
+
+<Callout icon="lightbulb" color="#1CB2FE">
+  Permissive mTLS accepts both plain-text (HTTP) and mTLS connections. It's a safe default during setup because it allows mixed clients while sidecars are being rolled out, but it does not enforce encryption or strongly verify caller identity.
+</Callout>
+
+***
+
+## 3) Enforce strict mTLS (PeerAuthentication)
+
+To require encrypted, authenticated connections between workloads in `mesh-demo`, create a PeerAuthentication resource with `mtls.mode: STRICT`.
+
+peer-auth-strict.yaml:
 
 ```yaml theme={null}
 apiVersion: security.istio.io/v1beta1
 kind: PeerAuthentication
 metadata:
   name: default
-  namespace: payments
+  namespace: mesh-demo
 spec:
   mtls:
     mode: STRICT
 ```
 
-Scope rules for `PeerAuthentication`:
+Apply it:
 
-* A `PeerAuthentication` named `default` in `istio-system` typically sets a mesh-wide default.
-* A `PeerAuthentication` named `default` in a namespace affects only that namespace.
-* A `PeerAuthentication` with a `selector` applies only to matching workloads (labels).
+```bash theme={null}
+kubectl apply -f peer-auth-strict.yaml
+```
 
-If you want strict mTLS for a specific namespace, create a `PeerAuthentication` named `default` in that namespace with `mode: STRICT`.
+Verify:
 
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/mtls-configuring-peerauthentication-scopes.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=272f5aaa8ca77beb7b99c02459b2d5b7" alt="The image is about configuring mTLS with PeerAuthentication in different scopes: mesh-wide, namespace, and workload levels. It details how each scope enforces the STRICT policy." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/mtls-configuring-peerauthentication-scopes.jpg" />
-</Frame>
+```bash theme={null}
+kubectl describe peerauthentications.security.istio.io default -n mesh-demo
+```
 
-## AuthorizationPolicy: service-level RBAC using SPIFFE identities
+Expected spec summary:
 
-While `PeerAuthentication` ensures encryption and identity, Istio’s `AuthorizationPolicy` enforces access control based on those identities. Policies reference SPIFFE URIs from mTLS certificates inside the `principals` field.
+```YAML theme={null}
+Spec:
+  mtls:
+    Mode: STRICT
+```
 
-Example: allow only the `web-app` service account in the `frontend` namespace to call the `payment-api` service, and permit only GET and POST to `/api/*`:
+<Callout icon="warning" color="#FF6B6B">
+  Applying `PeerAuthentication` with `mode: STRICT` will cause any plain-text (non-mTLS) connections to fail. Ensure all workloads in the namespace have sidecars injected and are up-to-date before applying strict mTLS to avoid service disruption.
+</Callout>
+
+***
+
+## 4) Restrict calls with an AuthorizationPolicy
+
+mTLS ensures encrypted, authenticated connections, but it does not restrict which workloads can connect to others. Use an AuthorizationPolicy to enforce a zero-trust pattern: allow only specific principals (service accounts) to call the payment API.
+
+Create this AuthorizationPolicy scoped to the `payment-api` workload:
+
+authz-policy.yaml:
 
 ```yaml theme={null}
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
-  name: allow-api-only
-  namespace: payments
+  name: payment-api-policy
+  namespace: mesh-demo
 spec:
   selector:
     matchLabels:
       app: payment-api
   rules:
-  - from:
-    - source:
-        principals:
-        - "spiffe://cluster.local/ns/frontend/sa/web-app"
-    to:
-    - operation:
-        methods: ["GET", "POST"]
-        paths: ["/api/*"]
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/mesh-demo/sa/web-frontend
+      to:
+        - operation:
+            methods: ["GET", "POST"]
 ```
 
-Notes:
+Key notes:
 
-* The `principals` value is the SPIFFE URI that the Envoy sidecars present during mTLS.
-* The default trust domain is often `cluster.local` in typical Istio installs; adjust if your cluster uses a different trust domain.
+* `selector.matchLabels` scopes the policy to pods labeled `app: payment-api`.
+* `principals` uses the SPIFFE identity form (here: `cluster.local/ns/mesh-demo/sa/web-frontend`) derived from the caller’s service account.
+* `operation.methods` limits allowed HTTP methods. You can also add `paths` or other HTTP attributes.
 
-## Verifying mTLS and sidecar injection
-
-Check that `PeerAuthentication` resources are present and inspect their modes:
+Apply the policy:
 
 ```bash theme={null}
-# List PeerAuthentication resources in the payments namespace
-kubectl get peerauthentication -n payments
-
-# Inspect a PeerAuthentication resource to see the mode
-kubectl get peerauthentication default -n payments -o yaml
+kubectl apply -f authz-policy.yaml
 ```
 
-Use `istioctl` to inspect a pod and see the applied mTLS settings and relevant policies:
+Table: Resources created
+
+| Resource Type       | Purpose                                       | Example                 |
+| ------------------- | --------------------------------------------- | ----------------------- |
+| PeerAuthentication  | Enforce namespace/workload mTLS mode          | `peer-auth-strict.yaml` |
+| AuthorizationPolicy | Allow specific principals to call payment-api | `authz-policy.yaml`     |
+
+***
+
+## 5) Validate behavior with in-cluster curl
+
+Test from a pod with an unauthorized identity (order-api). The request should be rejected by Istio (HTTP 403):
 
 ```bash theme={null}
-# Describe pod via istioctl to view mTLS and policy details
-istioctl x describe pod payment-api-xxx -n payments
+kubectl exec -n mesh-demo deployment/order-api -- \
+  curl -s -o /dev/null -w "%{http_code}" http://payment-api.mesh-demo.svc.cluster.local/api/pay
 ```
 
-Verify sidecar injection (the sidecar is the istio-proxy container). A `2/2` READY indicates the application container plus the istio-proxy sidecar:
+Expected output:
+
+```text theme={null}
+403
+```
+
+Test from the allowed principal (web-frontend). The request should be permitted; the upstream service may return `404` if the path is missing, which still indicates the request was authorized and reached the service:
 
 ```bash theme={null}
-# Confirm the sidecar is injected — look for READY = 2/2
-kubectl get pods -n payments
-# Example output:
-# NAME             READY   STATUS
-# payment-api-xxx  2/2     Running   <-- istio-proxy sidecar present
+kubectl exec -n mesh-demo deployment/web-frontend -- \
+  curl -s -o /dev/null -w "%{http_code}" http://payment-api.mesh-demo.svc.cluster.local/api/pay
 ```
 
-If you see `1/1`, no sidecar is injected and mTLS will not be applied for that pod.
+Expected output (example):
 
-## Rolling out strict mTLS safely
+```text theme={null}
+404
+```
 
-Follow a staged rollout to avoid outages:
+Interpretation:
 
-1. Enable automatic sidecar injection for the target namespace(s) and restart pods so they pick up the sidecar.
-2. Start with `PERMISSIVE` mode at the mesh or namespace level so both mTLS and plaintext are accepted. This allows services not yet meshed to continue communicating.
-3. Monitor traffic, Istio telemetry, and logs to detect and remediate failures.
-4. Once all workloads show sidecars and traffic is healthy, change the mode to `STRICT` for full enforcement.
+* `403` from `order-api`: Istio denied the request at the sidecar (authorization failure).
+* `404` from `web-frontend`: Policy allowed the request and the call reached the payment-api, but the specific path was not found.
 
-This approach mirrors standard safe rollout patterns used for security and policy enforcement.
+This demonstrates zero-trust networking: connections are both authenticated (mTLS) and authorized (AuthorizationPolicy).
 
-<Frame>
-  <img src="https://mintcdn.com/kodekloud-c4ac6d9a/uBQs-hUjzRb0XBPP/images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/migrating-to-mutual-tls-kubernetes.jpg?fit=max&auto=format&n=uBQs-hUjzRb0XBPP&q=85&s=d5b634dbdec007c57f6fbfc57fe088dc" alt="The image outlines steps for migrating to strict mutual TLS (mTLS) in a Kubernetes environment, including enabling sidecar injection, starting with a permissive mode, monitoring traffic, and switching to strict mode." width="1920" height="1080" data-path="images/Prep-Course-Certified-Cloud-Native-Platform-Engineer-CNPE/Security-and-Policy-Enforcement/Service-Mesh-Security-Encryption-and-Identity/migrating-to-mutual-tls-kubernetes.jpg" />
-</Frame>
+***
 
-## Quick checklist
+## 6) Re-run analysis
 
-* Ensure sidecar injection is enabled for target namespaces.
-* Confirm pods show `2/2` READY (application + istio-proxy).
-* Start with `PERMISSIVE` to avoid breaking traffic during migration.
-* Apply `PeerAuthentication` (`STRICT`) once all workloads are meshed.
-* Use `AuthorizationPolicy` to enforce service-to-service access using SPIFFE principals.
-* Validate with `istioctl x describe pod` and `kubectl` commands.
+Run `istioctl analyze` to surface configuration issues such as namespace injection, port naming, selector mismatches, or other diagnostic hints:
 
-<Callout icon="lightbulb" color="#1CB2FE">
-  Enable sidecar injection for the target namespaces and validate with `kubectl get pods -n <namespace>` (look for `2/2` READY) before switching PeerAuthentication to `STRICT`.
-</Callout>
+```bash theme={null}
+istioctl analyze -n mesh-demo
+```
 
-## References
+Example informational warnings:
 
-* Istio Service Mesh: [https://learn.kodekloud.com/user/courses/istio-service-mesh](https://learn.kodekloud.com/user/courses/istio-service-mesh)
-* SPIFFE: [https://spiffe.io/](https://spiffe.io/)
-* Envoy Proxy: [https://www.envoyproxy.io/](https://www.envoyproxy.io/)
+```text theme={null}
+Info [IST0118] (Service mesh-demo/payment-api) Port name (port: 80, targetPort: 80) doesn't follow Istio's port naming convention.
+Info [IST0118] (Service mesh-demo/web-frontend) Port name (port: 80, targetPort: 80) doesn't follow Istio's port naming convention.
+```
+
+Use `istioctl analyze` as a routine pre-deployment check before pushing broader changes to production.
+
+***
+
+Summary
+
+* Enabled Istio sidecar injection for the `mesh-demo` namespace.
+* Confirmed PERMISSIVE mTLS initially, then enforced STRICT mTLS using a PeerAuthentication.
+* Applied an AuthorizationPolicy to restrict which service account can call the payment API and limited allowed operations.
+* Validated enforcement with in-cluster curl tests: unauthorized requests were rejected by Istio, authorized requests reached the service.
+* Re-ran `istioctl analyze` to surface configuration warnings to address.
+
+Links and references
+
+* [Istio PeerAuthentication docs](https://istio.io/latest/docs/reference/config/security/peer_authentication/)
+* [Istio AuthorizationPolicy docs](https://istio.io/latest/docs/reference/config/security/authorization-policy/)
+* [istioctl analyze](https://istio.io/latest/docs/ops/diagnostic-tools/istioctl-analyze/)
+* [SPIFFE and SPIRE](https://spiffe.io/)
 
 <CardGroup>
-  <Card title="Watch Video" icon="video" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/35a7fadb-02d8-4557-a819-2e4dcfa970cc/lesson/19c3a421-318d-40c7-aeb3-45eebb398056" />
+  <Card title="Watch Video" icon="video" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/35a7fadb-02d8-4557-a819-2e4dcfa970cc/lesson/64424caf-3564-4c76-93f1-0d88101072d6" />
+
+  <Card title="Practice Lab" icon="flask-conical" cta="Learn more" href="https://learn.kodekloud.com/user/courses/prep-course-certified-cloud-native-platform-engineer-cnpe/module/35a7fadb-02d8-4557-a819-2e4dcfa970cc/lesson/caedb06f-ceb3-4c51-9c37-be0a7855e26b" />
 </CardGroup>
